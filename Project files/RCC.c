@@ -32,21 +32,20 @@
 void RCC_init()
 {
     RCC->CFGR    &= ~RCC_CFGR_SW;                    // majprej izberes source clock, ker HSE ne mores izklopiti, ce ze enkrat poganja kakrsen koli modul/periferijo
-    RCC->CFGR    |= RCC_CFGR_SW_HSE;                 // Use HSE as SYSCLK source
-//RCC->CFGR    |= RCC_CFGR_SW_HSI;
     RCC->CR      |= (RCC_CR_HSEON | RCC_CR_HSION);   // Enable High-Speed-External and High-Speed-Internal Oscillators (HSE: SYSCLK source, HSI: Flash CLK)
-//RCC->CR      |= RCC_CR_HSION;
-//RCC->CR      &= ~RCC_CR_HSEON;
+    while((RCC->CR & RCC_CR_HSERDY) != RCC_CR_HSERDY);
+    RCC->CFGR    |= RCC_CFGR_SW_HSE;                 // Use HSE as SYSCLK source
     RCC->CFGR    &= ~(RCC_CFGR_HPRE);                // AHB prescaler = 1
     RCC->CFGR    &= ~RCC_CFGR_PPRE1;
     RCC->CFGR    |= RCC_CFGR_PPRE1_DIV4;             // APB1DIV: Divide HSE=25MHz by 4 (boljsa nastavitev baude rate za UART; vezani tudi)
     RCC->CFGR    &= ~(RCC_CFGR_PPRE2);               // APB2DIV = 1
     RCC->APB2ENR |= ( RCC_APB2ENR_IOPBEN |           // Enable I/O Port B
-                      RCC_APB2ENR_IOPCEN );          // Enable I/O Port C  
+                      RCC_APB2ENR_IOPCEN |           // Enable I/O Port C 
+                      RCC_APB2ENR_IOPDEN);           // Enable I/O Port D  
     RCC->APB2ENR |= RCC_APB2ENR_AFIOEN;
-//    RCC->APB1ENR |= RCC_APB1ENR_SPI3EN;              // Enable SPI 3
-//    RCC->APB2ENR |= RCC_APB2ENR_USART1EN;            // Enable USART1
+    RCC->APB1ENR |= RCC_APB1ENR_SPI3EN;              // Enable SPI 3
     RCC->APB1ENR |= RCC_APB1ENR_UART4EN;             // Enable UART4
+    
 }
  
  
