@@ -30,8 +30,6 @@
 #include "SPI.h"
 #include "SDcard.h"
 
-#define SD_CS_PIN       GPIO_ODR_ODR3
-
 
 uint8_t SD_init()
 {
@@ -53,7 +51,10 @@ uint8_t SD_init()
     SD_selectCard();
     
     // pocakaj, da gre kartica v idle state v SPI nacinu
-    while((status = SD_cardCommand(CMD0, 0)) != R1_IDLE_STATE);
+    do
+    {
+        status = SD_cardCommand(CMD0, 0);
+    } while(status != R1_IDLE_STATE);
     
     // preveri verzijo
     if(SD_cardCommand(CMD8, 0x1AA) & R1_ILLEGAL_CMD)

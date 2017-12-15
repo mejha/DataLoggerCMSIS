@@ -30,30 +30,22 @@
  {
      
      // ******************** SPI ********************
+     // Disable JTAG (shared with SPI pins) and enable SWI debug
+     AFIO->MAPR |= AFIO_MAPR_SWJ_CFG_1;
      
-//     AFIO->MAPR |= AFIO_MAPR_SPI3_REMAP;// Premostimo SPI3 na PC10, PC11, PC12 in PA4 pine
+     // === Port B ===
+     // SCK - PB3
+     // MISO - PB4
+     // MOSI - PB5
+     GPIOB->CRL |= GPIO_CRL_MODE3_0 | GPIO_CRL_MODE5_0;     // 01: outputs (max speed  = 10 MHz)
+     GPIOB->CRL &= ~GPIO_CRL_MODE4;                         // 00: input
+     GPIOB->CRL |= GPIO_CRL_CNF3_1 | GPIO_CRL_CNF5_1;       // 10: AF push-pull
+     GPIOB->CRL |= GPIO_CRL_CNF4_0;                         // 01: floating input
      
-     // === Port A ===
-     // SPI_NSS  (PA4)  -  Alternate function push-pull
-//     GPIOA->CRL &= ~(GPIO_CRL_MODE);    // Clear all MODEx[1:0] bits; makes them inputs
-//     GPIOA->CRL &= ~(GPIO_CRL_CNF);     // Clear all CNFx[1:0] bits; makes them analog
-//     GPIOA->CRL |= GPIO_CRL_CNF4_1;     // GPIO is in alternate function push-pull
-//     GPIOA->CRL |= GPIO_CRL_MODE4_0;    // Max. output speed 10MHz
-     
-     // JTAG/SWD are left as main functions after reset so nothing is done at this point
-     
-     // === Port C ===
-     // SPI_SCK  (PC10) -  Alternate function push-pull
-     // SPI_MOSI (PC12) -  Alternate function push-pull
-     // SPI_MISO (PC11) -  Input, pull-up
-//     GPIOC->CRH &= ~(GPIO_CRH_MODE);    // Clear all MODEx[1:0] bits; makes them inputs
-//     GPIOC->CRH |= (GPIO_CRH_MODE10_0 |
-//                    GPIO_CRH_MODE12_0);
-//     GPIOC->CRH &= ~(GPIO_CRH_CNF);     // Clear all CNFx[1:0] bits; analog mode
-//     GPIOC->CRH |= (GPIO_CRH_CNF10_1 |  // PC10 is in alternate function; push-pull 
-//                    GPIO_CRH_CNF12_1 |  // PC12 is in alternate function; push-pull 
-//                    GPIO_CRH_CNF11_1);  // PC11 is in input mode
-//     GPIOC->ODR |= GPIO_ODR_ODR11;      // Enable pull-up on PC11
+     // === Port D ===
+     // CS - PD3
+     GPIOD->CRL |= GPIO_CRL_MODE3_0;     // 01: output (max speed = 10 MHz)
+     GPIOD->CRL &= ~GPIO_CRL_CNF3;       // 00: GP push-pull
     
      
      // When LSE is enabled it has priority over GPIO on PC13 and PC14 
@@ -62,8 +54,8 @@
      // ******************** UART ********************
      
      // === Port C ===
-     // UART1_TX (PC10)  - Alternate function push-pull
-     // UART1_RX (PC11) - Input - pull-up
+     // UART4_TX (PC10) - Alternate function push-pull
+     // UART4_RX (PC11) - Input - pull-up
      GPIOC->CRH &= ~(GPIO_CRH_CNF10 |    // clear CNF[1:0] for pin 9 and pin 10
                      GPIO_CRH_CNF11);
      GPIOC->CRH |= GPIO_CRH_CNF10_1;     // AF push-pull
