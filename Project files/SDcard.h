@@ -26,10 +26,6 @@
  #ifndef _SDCARD_H
  #define _SDCARD_H
  
- 
-#define SD_CS_PIN       GPIO_ODR_ODR3
-
- 
  typedef struct CID {
 	// byte 0
 	uint8_t mid;  // Manufacturer ID

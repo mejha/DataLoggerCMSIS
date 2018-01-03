@@ -34,12 +34,15 @@ osMutexId id_mutex_uart;
 UART_Data ESPdata;
 
 void UART_init()
-{    
+{
+//    RCC->APB2RSTR |= RCC_APB1RSTR_UART4RST;    // reset USART1 peripheral (clear all regs and set them to defaul values
+//    RCC->APB2RSTR &= ~RCC_AP12RSTR_UART4RST;   // clr reset flag
+    
     UART4->CR1 |= USART_CR1_UE;                // Enable USART output and prescaler (works all the time)
     //UART4->CR1 &= ~USART_CR1_M;                // M=0 --> 8-bit data len
     UART4->CR1 |= USART_CR1_M;                 // M=1 --> 9-bit data len
     
-	//UART4->CR1 &= ~USART_CR1_PCE;
+		//UART4->CR1 &= ~USART_CR1_PCE;
     UART4->CR1 |= USART_CR1_PCE;               // Parity control enable
     UART4->CR1 &= ~USART_CR1_PS;               // Even parity: Parity Selection PS == 0
     
