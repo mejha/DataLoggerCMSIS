@@ -23,8 +23,15 @@
  *				  
  */
 
+
 #include "stm32f10x.h"
-#include "UART.h"
+#include "globalData.h"
+//#include "UART.h"
+
+osMutexId id_mutex_uart;
+//osMutexDef(init_mutex_uart);
+
+UART_Data ESPdata;
 
 void UART_init()
 {
@@ -73,7 +80,7 @@ void UART_init()
 void UART_Write(UART_Data *tx)
 {
     uint32_t i;
-    for(i=0; i<tx->length; ++i)
+    for(i=0; i<tx->lengthUART; ++i)
     {
         while(!(UART4->SR & USART_SR_TXE));        // wait uuntil Tx reg is empty
         
@@ -93,7 +100,7 @@ void UART_Write(UART_Data *tx)
 void UART_WriteP(UART_Data *tx)
 {
     uint32_t i;
-    for(i=0; i<tx->length; ++i)
+    for(i=0; i<tx->lengthAT; ++i)
     {
         while(!(UART4->SR & USART_SR_TXE));        // wait uuntil Tx reg is empty
         
@@ -118,7 +125,7 @@ void UART_Read(UART_Data *rx)
     uint32_t n = 0;
     uint32_t SRvalue = 0;
     resetRxStatus(&(rx->rxStatus), 0, 0, 0, 0, 0);
-    rx->length = 0;                                 // reset len vrednost
+    rx->lengthUART = 0;                                 // reset len vrednost
 
     while(beri) 
     {   
@@ -165,7 +172,7 @@ void UART_Read(UART_Data *rx)
         rx->rxStatus.breakCharDetected = 1;
     }
     
-    rx->length = n;
+    rx->lengthUART = n;
     
     //if(currentRx.parityError) {...?...}           // zahtevaj ponovitev trnasmicije
     
@@ -174,13 +181,12 @@ void UART_Read(UART_Data *rx)
 
 void UART_ReadReq(UART_Data *rx)
 {
-    
     uint8_t beri = 1;
 
     uint32_t n = 0;
     uint32_t SRvalue = 0;
     resetRxStatus(&(rx->rxStatus), 0, 0, 0, 0, 0);
-    rx->length = 0;                                 // reset len vrednost
+    rx->lengthUART = 0;                                 // reset len vrednost
 
     while(beri) 
     {   
@@ -221,7 +227,7 @@ void UART_ReadReq(UART_Data *rx)
         rx->rxStatus.breakCharDetected = 1;
     }
     
-    rx->length = n;
+    rx->lengthUART = n;
     
     //if(currentRx.parityError) {...?...}           // zahtevaj ponovitev trnasmicije
     
@@ -235,4 +241,92 @@ void resetRxStatus(UART_Status *status, uint8_t a, uint8_t b, uint8_t c, uint8_t
     status->EOTChar           = c;
     status->parityError       = d;
     status->ESPTxEnd          = e;
+}
+
+void UART_Main_idle()
+{
+	int UART_Flag = 0, UART_READ_cnt = 0;
+	char *pTemp;
+	char cArrayTemp[1];
+	int iTempLen = 0, i, iSignalFlag = 0;
+	uint8_t iFinishFlag = 0; // zastavica za GET in POST
+	osEvent rcvSignal;
+	
+	while(1)
+	{
+		if(!UART_Flag)
+		{
+			rcvSignal = osSignalWait(0, osWaitForever);
+			UART_Flag = rcvSignal.value.signals;
+		}
+		// wait
+		osMutexWait(id_mutex_uart, osWaitForever);		
+		
+		if(UART_Flag == SIGNAL_READ_DATA)
+		{
+			UART_ReadReq(&ESPdata);
+			
+			pTemp = strstr((const char*) &ESPdata.buffer[0], STR_GET);
+			
+			if(pTemp)
+			{		// here we should get someting like that: +IPD,0,410:GET /favicon.ico HTTP/1.1
+				pTemp -= 2;
+				i = 1;
+				while(cArrayTemp[0] != ',')
+				{
+					strncpy(cArrayTemp, pTemp, 1);
+					if((cArrayTemp[0] < 48) || (cArrayTemp[0] > 57))
+						break;
+					iTempLen += (cArrayTemp[0] - 48) * i;
+					i = i * 10; // enice, desetice, stotice,...
+					pTemp--;
+				}
+				if(iTempLen <= ESPdata.lengthUART)
+					iFinishFlag = 1;
+			}
+		}
+		else if(UART_Flag == SIGNAL_SEND_DATA)
+		{
+			UART_Write(&ESPdata);
+			UART_Flag = UART_READ_RESPONSE;
+			UART_READ_cnt = 0;
+		}
+		else if(UART_Flag == SIGNAL_SEND_AT)
+		{
+			UART_WriteP(&ESPdata);
+			iFinishFlag = 1;
+		}
+		else if(UART_Flag == UART_READ_RESPONSE)
+		{
+			UART_Read(&ESPdata);
+			
+			if(strstr((const char*) &ESPdata.buffer[0], STR_OK))
+				iFinishFlag = 1;
+			else
+			{
+				UART_Read(&ESPdata);
+				if(strstr((const char*) &ESPdata.buffer[0], STR_OK))
+					iFinishFlag = 1;
+				else
+				{
+					iFinishFlag = 1;
+					iSignalFlag = 1; // neki ni vredi, handlaj error -> naredi define
+				}
+			}
+		}
+		
+		// release
+		osMutexRelease(id_mutex_uart);
+		osDelay(1);
+			
+		if(iFinishFlag)
+		{
+			iFinishFlag = 0;
+			UART_Flag = 0;
+			iTempLen = 0;
+			iSignalFlag = 0;
+			osSignalSet(id_ESP, 1);
+			osDelay(1);
+		}
+	}
 }

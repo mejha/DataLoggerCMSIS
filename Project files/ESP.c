@@ -24,13 +24,16 @@
  */
  
 #include <stdio.h>
+#include <cmsis_os.h>
 
 #include "stm32f10x.h"
+#include "globalData.h"
 #include "ESP.h"
-#include "UART.h"
+//#include "UART.h"
 #include "GPIO.h"
 
-static UART_Data ESPdata;
+// mutex
+osMutexId id_mutex_ESP_UART;
 
 static ATCommandList ATcommand = {  { 'A', 'T', '\r', '\n' },                                                                               // .AT        = { 'A', 'T', '\n', 0xD },
                                     { 'A', 'T', 'E', '0', '\r', '\n' },                                                                     // .ATE0
@@ -44,7 +47,7 @@ static ATCommandList ATcommand = {  { 'A', 'T', '\r', '\n' },                   
                                     { 'A', 'T', '+', 'C', 'I', 'F', 'S', 'R', '\r', '\n'  },                                                // .ATCIFSR   = { 'A', 'T', '+', 'C', 'I', 'F', 'S', 'R', '\n', 0xD  },
                              
                                     AT_SIZE+2,         // .ATsize        = AT_SIZE+2,
-									ATE0_SIZE+2,
+																		ATE0_SIZE+2,
                                     ATE1_SIZE+2,       // .ATE0size      = ATE0_SIZE+2
                                     CWMODE3_SIZE+2,    // .CWMODE3size   = CWMODE3_SIZE+2,
                                     CIPMUX1_SIZE+2,    // .CIPMUX1size   = CIPMUX1_SIZE+2,
@@ -55,154 +58,259 @@ static ATCommandList ATcommand = {  { 'A', 'T', '\r', '\n' },                   
                                     ATCIFSR_SIZE+2     // .ATCIFSRsize   = ATCIFSR_SIZE+2 
                                 };
 
-								
-// novi poiskus implementacije
+// ESP HTML fixed strings
 #define HTML_INIT "<!DOCTYPE html>"
-#define HTML_DATE_TIME "<form><button type=\"submit\" formmethod=\"post\">Set time</button>Time (dd/mm/yyyy hh/mm): <input type=\"text\" name=\"datetime\"></form>"
-#define HTML_CURRENT_TIME "Current Time: "
 #define HTML_META_REFRESH "<meta http-equiv=\"refresh\" content=\"15\">"
 #define HTML_STYLE "<style>table,th,td{border: 1px solid black;border-collapse: collapse;}th,td{padding: 5px;text-align: left;}</style>"
 #define HTML_FORM_DATE_TIME "<form><button type=\"submit\" formmethod=\"post\">Set time</button>Time (dd/mm/yyyy hh/mm): <input type=\"text\" name=\"datetime\"></form>"
+																
+#define HTML_TABLE_STYLE "<table style=\"width:60%\">"
+#define HTML_START_TR	"<tr>"
+#define HTML_START_TH "<th>"
+#define HTML_START_TD "<td>"
+
+#define HTML_COLSPAN "<th colspan=\"2\">"
+
+#define HTML_END_TR "</tr>"
+#define HTML_END_TH "</th>"
+#define HTML_END_TD "</td>"
+#define HTML_END_TABLE "</table>"
+																
+// ESP response flag															
+#define RECIEVED_GET 		1
+#define RECIEVED_POST		2	
+
+#define UART_SEND_TYPE_AT			1
+#define UART_SEND_TYPE_UART		2
 	
-enum ESP_init_states {
-	ESP_RESET = 0,
-	ESP_ECHO,
-	ESP_CWMODE,
-	ESP_CIPMUX,
-	ESP_CIPSERVER,
+																
+int send_ATcommand(AT_command_type command)
+{
 	
-	ESP_STATE_NUM,
-	ESP_FINISH_INIT
-};
+	switch(command)
+	{
+		case AT:
+			ESPdata.pBuffer = ATcommand.AT;
+			ESPdata.lengthAT  = ATcommand.ATsize;
+		break;
+		
+		case ATE1:
+			ESPdata.pBuffer = ATcommand.ATE1;
+			ESPdata.lengthAT  = ATcommand.ATE1size;
+		break;
+		
+		case ATE0:
+			ESPdata.pBuffer = ATcommand.ATE0;
+			ESPdata.lengthAT  = ATcommand.ATE0size;
+		break;
+		
+		case AT_CWMODE3:
+			ESPdata.pBuffer = ATcommand.CWMODE3;
+			ESPdata.lengthAT = ATcommand.CWMODE3size;
+		break;
+		
+		case AT_CIPMUX1:
+			ESPdata.pBuffer = ATcommand.CIPMUX1;
+			ESPdata.lengthAT = ATcommand.CIPMUX1size;
+		break;
+		
+		case AT_CIPSERVER:
+			ESPdata.pBuffer = ATcommand.CIPSERVER;
+			ESPdata.lengthAT = ATcommand.CIPSERVERsize;
+		break;
+		
+		case AT_CIPSEND:
+			ATcommand.CIPSEND[11] = ESPdata.iChannelSendNum + '0';		
+			ESP_HTML_setSizeOfCIPSEND(&ESPdata);
+			ESPdata.pBuffer = ATcommand.CIPSEND;					
+			ESPdata.lengthAT = ATcommand.CIPSENDsize;
+		break;
+		
+		case AT_CIPCLOSE:
+			ATcommand.CIPCLOSE[12] = ESPdata.iChannelSendNum + '0';
+			ESPdata.pBuffer = ATcommand.CIPCLOSE;
+			ESPdata.lengthAT = ATcommand.CIPCLOSEsize;
+		break;
+		
+		case AT_RESET:
+			ESPdata.pBuffer = ATcommand.RST;
+			ESPdata.lengthAT = ATcommand.RSTsize;
+		break;
+		
+//		case AT_CIFSR:
+//		break;
+		
+		default:
+		return 1; // error
+	}
+	
+	//ESP_Write(&ESPdata, UART_SEND_TYPE_AT);
+	
+		osSignalSet(id_UART, SIGNAL_SEND_AT);
+		osDelay(1);
+		osSignalWait(0, osWaitForever);
+		osDelay(1);
+	
+	return 0; // ok
+}
 	
 // ESP inicializacija
 void ESP_init()
 {
-    uint32_t cnt = 0;
-	uint8_t ESP_state = ESP_ECHO;
+  uint32_t cnt = 0;
+	uint8_t ESP_state = ESP_RESET;
+	int iStateCounterSafety = 0;		// zascita, ce bi se ESP slucajno cikal -> ga resetiraj
     
-	while (ESP_state < ESP_STATE_NUM) 
+	while (ESP_state != ESP_FINISH_INIT)
 	{
 		for(cnt=0; cnt<1000000; ++cnt);
 		
-		switch(ESP_state) {
-			
+		if(iStateCounterSafety > 5)
+		{
+			ESP_state = ESP_RESET;
+			iStateCounterSafety = 0;
+		}
+		
+		switch(ESP_state) 
+		{	
 			case ESP_RESET:
-				ESPdata.pBuffer = ATcommand.RST;
-				ESPdata.length = ATcommand.RSTsize;
-				ESP_Write(&ESPdata);
+				//send_ATcommand(AT_RESET);
+			ESPdata.pBuffer = ATcommand.RST;
+			ESPdata.lengthAT = ATcommand.RSTsize;
+			UART_WriteP(&ESPdata);
 			
-				if(ESP_ReadATResponse(&ESPdata))
-					ESP_state = ESP_ECHO;
+			ESP_state = ESP_ECHO;
+			for(cnt=0; cnt<1000000; ++cnt);
 			break;
 			
-			case ESP_ECHO:				
-				ESPdata.pBuffer = ATcommand.ATE0;
-				ESPdata.length  = ATcommand.ATE0size;
-				ESP_Write(&ESPdata);
+			case ESP_ECHO:				// echo off
+				//send_ATcommand(ATE0);
+			ESPdata.pBuffer = ATcommand.ATE0;
+			ESPdata.lengthAT  = ATcommand.ATE0size;
+			UART_WriteP(&ESPdata);
 				
-				if(ESP_ReadATResponse(&ESPdata))
-					ESP_state = ESP_CWMODE;				
+			if(ESP_ReadATResponse(&ESPdata))
+				ESP_state = ESP_CWMODE;
+			else
+				iStateCounterSafety++;				
 			break;
 			
-			case ESP_CWMODE: 				
-				// set ESP in AP and client mode
-				ESPdata.pBuffer = ATcommand.CWMODE3;
-				ESPdata.length = ATcommand.CWMODE3size;
-				ESP_Write(&ESPdata);
+			case ESP_CWMODE: 			// set ESP in AP and client mode	
+				//send_ATcommand(AT_CWMODE3);
+			ESPdata.pBuffer = ATcommand.CWMODE3;
+			ESPdata.lengthAT  = ATcommand.CWMODE3size;
+			UART_WriteP(&ESPdata);
 
-				if(ESP_ReadATResponse(&ESPdata))
-					ESP_state = ESP_CIPMUX;							
+			if(ESP_ReadATResponse(&ESPdata))
+				ESP_state = ESP_CIPMUX;
+			else
+				iStateCounterSafety++;
 			break;
 			
-			case ESP_CIPMUX: 				
-				// allow multiple connections
-				ESPdata.pBuffer = ATcommand.CIPMUX1;
-				ESPdata.length = ATcommand.CIPMUX1size;
-				ESP_Write(&ESPdata);
+			case ESP_CIPMUX: 			// allow multiple connections
+				//send_ATcommand(AT_CIPMUX1);
+			ESPdata.pBuffer = ATcommand.CIPMUX1;
+			ESPdata.lengthAT  = ATcommand.CIPMUX1size;
+			UART_WriteP(&ESPdata);
 			
-				if(ESP_ReadATResponse(&ESPdata))
-					ESP_state = ESP_CIPSERVER;		
+			if(ESP_ReadATResponse(&ESPdata))
+				ESP_state = ESP_CIPSERVER;
+			else
+				iStateCounterSafety++;
 			break;
 			
-			case ESP_CIPSERVER: 
-				// server mode & port 80 set
-				ESPdata.pBuffer = ATcommand.CIPSERVER;
-				ESPdata.length = ATcommand.CIPSERVERsize;
-				ESP_Write(&ESPdata);
+			case ESP_CIPSERVER:	  // server mode & port 80 set
+				//send_ATcommand(AT_CIPSERVER);
+			ESPdata.pBuffer = ATcommand.CIPSERVER;
+			ESPdata.lengthAT  = ATcommand.CIPSERVERsize;
+			UART_WriteP(&ESPdata);
 			
-				if(ESP_ReadATResponse(&ESPdata))
-					ESP_state = ESP_FINISH_INIT;		
+			if(ESP_ReadATResponse(&ESPdata))
+				ESP_state = ESP_FINISH_INIT;
+			else
+				iStateCounterSafety++;
 			break;
 			
 			default:
-				ESP_state = ESP_RESET;
+			ESP_state = ESP_RESET;
+			iStateCounterSafety = 0;
 			break;
 		}
 	}
+}
+
+void ESP_HTML_EOT(void)
+{
+	ESPdata.buffer[ESPdata.lengthUART++] = 0x0D;
+	ESPdata.buffer[ESPdata.lengthUART++] = 0x0A;
 }
 
 // add elements to buffer
 void ESP_HTML_AddToBuffer(UART_Data *ESPdata, char addToPage[])
 {
-	uint8_t counter = 0;
-	uint8_t sizeOfChar = 0;
+	int counter = 0;
+	int sizeOfChar = 0;
 	
-	for(counter=0; addToPage[counter]; counter++) // izracuna dolzino char
-		sizeOfChar ++;
+//	for(counter=0; addToPage[counter]; counter++) // izracuna dolzino char
+//		sizeOfChar ++;
+	
+	sizeOfChar = strlen(addToPage);
 
 	for (counter = 0; counter < sizeOfChar; counter++)
-		ESPdata->buffer[ESPdata->length + counter] = addToPage[counter];
+		ESPdata->buffer[ESPdata->lengthUART + counter] = addToPage[counter];
 	
-	ESPdata->length = ESPdata->length + sizeOfChar;
+	ESPdata->lengthUART = ESPdata->lengthUART + sizeOfChar;
 }
 
 // Zgradi tabelo z u8_numOfSenzors stevilom senzorjem
-void ESP_HTML_BuildSenzorTable(UART_Data *ESPdata, uint8_t u8_numOfSenzors)
+void ESP_HTML_BuildSenzorTable(UART_Data *ESPdata, uint8_t numOfSenzors)
 {
-	uint8_t u8_numOfRows = 5;
+	uint8_t numOfRows = 5;
 	int i,j;
 	char cSenzorBuff[] = "Senzor 1 ";
 	
-	ESP_HTML_AddToBuffer(ESPdata, "<table style=\"width:60%\">");
-	ESP_HTML_AddToBuffer(ESPdata, "<tr>");
+	ESP_HTML_AddToBuffer(ESPdata, HTML_TABLE_STYLE);
+	ESP_HTML_AddToBuffer(ESPdata, HTML_START_TR);
 	
-	for(i = 0; i < u8_numOfSenzors; i++) // dodamo imena senzorjev
+	for(i = 0; i < numOfSenzors; i++) // dodamo imena senzorjev
 	{
 		cSenzorBuff[7] = i + 1 + '0';
 
-		ESP_HTML_AddToBuffer(ESPdata, "<th colspan=\"2\">"); // vrednosti senzorjev bo potrebno prebrati iz SD kartice
+		ESP_HTML_AddToBuffer(ESPdata, HTML_COLSPAN); // vrednosti senzorjev bo potrebno prebrati iz SD kartice
 		ESP_HTML_AddToBuffer(ESPdata, cSenzorBuff);
-		ESP_HTML_AddToBuffer(ESPdata, "[°C]</th>");
+		ESP_HTML_AddToBuffer(ESPdata, "[°C]");
+		ESP_HTML_AddToBuffer(ESPdata, HTML_END_TH);
 	}
 	
-	ESP_HTML_AddToBuffer(ESPdata, "</tr>");
+	ESP_HTML_AddToBuffer(ESPdata, HTML_END_TR);
 	
-	for(i = 0; i < u8_numOfRows; i++) // stevilo vrstic
+	for(i = 0; i < numOfRows; i++) // stevilo vrstic
 	{
-		ESP_HTML_AddToBuffer(ESPdata, "<tr>");
+		ESP_HTML_AddToBuffer(ESPdata, HTML_START_TR);
 		
-		for(j = 0; j < u8_numOfSenzors; j++) // dodamo vrednosti senzorjev, zaenkrat imamo testne vrednosti, funkcijo je potrebno dodelati
+		for(j = 0; j < numOfSenzors; j++) // dodamo vrednosti senzorjev, zaenkrat imamo testne vrednosti, funkcijo je potrebno dodelati
 		{
-			ESP_HTML_AddToBuffer(ESPdata, "<td>");
+			ESP_HTML_AddToBuffer(ESPdata, HTML_START_TD);
 			ESP_HTML_AddToBuffer(ESPdata, "12");
-			ESP_HTML_AddToBuffer(ESPdata, "</td>");
+			ESP_HTML_AddToBuffer(ESPdata, HTML_END_TD);
 			
-			ESP_HTML_AddToBuffer(ESPdata, "<td>");
+			ESP_HTML_AddToBuffer(ESPdata, HTML_START_TD);
 			ESP_HTML_AddToBuffer(ESPdata, "10/1/2017 10:10");
-			ESP_HTML_AddToBuffer(ESPdata, "</td>");
+			ESP_HTML_AddToBuffer(ESPdata, HTML_END_TD);
 		}
 		
-		ESP_HTML_AddToBuffer(ESPdata, "</tr>");
+		ESP_HTML_AddToBuffer(ESPdata, HTML_END_TR);
 	}
 
-	ESP_HTML_AddToBuffer(ESPdata, "</table>");
+	ESP_HTML_AddToBuffer(ESPdata, HTML_END_TABLE);
 }
 
 // here we create HTML page
 void ESP_HTML_build(UART_Data *ESPdata) 
 {
 	uint8_t senzorNum = 4;
+	
+	ESPdata->lengthUART = 0;
 	//start HMTL
 	ESP_HTML_AddToBuffer(ESPdata, HTML_INIT);
 	ESP_HTML_AddToBuffer(ESPdata, "<hmtl>");
@@ -229,216 +337,112 @@ void ESP_HTML_build(UART_Data *ESPdata)
 
 void ESP_HTML_setSizeOfCIPSEND(UART_Data *ESPdata)
 {
-	if (ESPdata->length > 999)
+	if (ESPdata->lengthUART > 999)
 	{
-		ATcommand.CIPSEND[13] = (ESPdata->length / 1000) % 10 + '0';
-		ATcommand.CIPSEND[14] = (ESPdata->length / 100) % 10 + '0';
-		ATcommand.CIPSEND[15] = (ESPdata->length / 10) % 10 + '0';
-		ATcommand.CIPSEND[16] = ESPdata->length % 10 + '0';
+		ATcommand.CIPSEND[13] = (ESPdata->lengthUART / 1000) % 10 + '0';
+		ATcommand.CIPSEND[14] = (ESPdata->lengthUART / 100) % 10 + '0';
+		ATcommand.CIPSEND[15] = (ESPdata->lengthUART / 10) % 10 + '0';
+		ATcommand.CIPSEND[16] =  ESPdata->lengthUART % 10 + '0';
 	}
-	else if ((ESPdata->length > 99) && (ESPdata->length < 1000))
+	else if ((ESPdata->lengthUART > 99) && (ESPdata->lengthUART < 1000))
 	{
 		ATcommand.CIPSEND[13] = '0';
-		ATcommand.CIPSEND[14] = (ESPdata->length / 100) % 10 + '0';
-		ATcommand.CIPSEND[15] = (ESPdata->length / 10) % 10 + '0';
-		ATcommand.CIPSEND[16] = ESPdata->length % 10 + '0';
+		ATcommand.CIPSEND[14] = (ESPdata->lengthUART / 100) % 10 + '0';
+		ATcommand.CIPSEND[15] = (ESPdata->lengthUART / 10) % 10 + '0';
+		ATcommand.CIPSEND[16] =  ESPdata->lengthUART % 10 + '0';
 	}
-	else if ((ESPdata->length > 9) && (ESPdata->length < 100))
+	else if ((ESPdata->lengthUART > 9) && (ESPdata->lengthUART < 100))
 	{
 		ATcommand.CIPSEND[13] = '0';
 		ATcommand.CIPSEND[14] = '0';
-		ATcommand.CIPSEND[15] = ESPdata->length / 10 + '0';
-		ATcommand.CIPSEND[16] = ESPdata->length % 10 + '0';
+		ATcommand.CIPSEND[15] = ESPdata->lengthUART / 10 + '0';
+		ATcommand.CIPSEND[16] = ESPdata->lengthUART % 10 + '0';
 	}
 	else
 	{
 		ATcommand.CIPSEND[13] = '0';
 		ATcommand.CIPSEND[14] = '0';
 		ATcommand.CIPSEND[15] = '0';
-		ATcommand.CIPSEND[16] = ESPdata->length + '0';
+		ATcommand.CIPSEND[16] = ESPdata->lengthUART + '0';
 	}
 }
 
 
-void ESP_check_request()
+void ESP_Main_Idle()
 {
-    uint8_t requestType = 0;
-    uint32_t cnt = 0;
-	uint32_t tempLenght = 0;
-    
-    ESP_ReadReq(&ESPdata);
-    
-    requestType = searchArrayForRequestType(&ESPdata);
-    
-    switch(requestType) {
-        case 1:     // GET						
-			ESPdata.length = 0;
-			ESP_HTML_build(&ESPdata);
+	uint8_t requestType = 0;
 	
-			tempLenght = ESPdata.length; // zacasno shranimo dolzino
+	while(1)
+	{
+		osSignalSet(id_UART, SIGNAL_READ_DATA);
+		osDelay(1);
+		
+		osSignalWait(0, osWaitForever);
+		osDelay(1);
+		
+		requestType = searchReqType(&ESPdata);
+		
+		switch(requestType) 
+		{
+			case FLAG_GET:
+			ESPdata.lengthUART = 0;
+			ESP_HTML_build(&ESPdata);	// zgradimo stran
+
+			send_ATcommand(AT_CIPSEND);
+			osDelay(20);
+			osSignalSet(id_UART, SIGNAL_SEND_DATA);	// send html page
+			osDelay(1);
 			
-			// nastavimo kanal, poiscemo ga v searchArrayForRequestType
-			ATcommand.CIPSEND[11] = ESPdata.iChannelNum + '0';		
-			ESP_HTML_setSizeOfCIPSEND(&ESPdata);
-			ESPdata.pBuffer = ATcommand.CIPSEND;					
-			ESPdata.length = ATcommand.CIPSENDsize;
-			ESP_Write(&ESPdata);	// ESP_Write se uporablja za posiljanje komand, UART_Write pa za posiljanje iz bufferja
+			osSignalWait(0, 500);
+			osDelay(1);				
+			
+			send_ATcommand(AT_CIPCLOSE);
+			break;
+			
+			case FLAG_POST:     // POST
+					//dealWithPOST();
+					break;
+			default:
+					break;
+		}
+	}
+}
 
-			ESPdata.length = tempLenght;	
-		
-			for(cnt=0; cnt<400000; ++cnt);	// nevem zakaj mora biti tuki delay!!!! TODO, weird shit - slabo, upocasni posiljanje podatkov proti esp-ju grrrr
-		
-			UART_Write(&ESPdata);
-
-			for(cnt=0; cnt<400000; ++cnt);	// nevem zakaj mora biti tuki delay!!!! TODO, mogoce ESP ni dovolj hiter?
+uint8_t searchReqType(UART_Data *ESPdata)
+{
+	int i, iFlag = 0;
 	
-			ATcommand.CIPCLOSE[12] = ESPdata.iChannelNum + '0';
-			ESPdata.pBuffer = ATcommand.CIPCLOSE;
-            ESPdata.length = ATcommand.CIPCLOSEsize;
-            ESP_Write(&ESPdata);
-
-            break;
-        case 2:     // POST
-            //dealWithPOST();
-            break;
-        default:
-            break;
-    }
+	if(strstr((const char*) &ESPdata->buffer[0], STR_GET))
+		iFlag = FLAG_GET;
+	
+	if(strstr((const char*) &ESPdata->buffer[0], STR_POST) && (strstr((const char*) &ESPdata->buffer[0], STR_DATE_TIME)))
+		iFlag = FLAG_POST;
+	
+	for(i = 0; i < (UART_TX_RX_BUFFER_LEN-2); ++i)
+	{
+		if((ESPdata->buffer[i] == ',') && (ESPdata->buffer[i + 2] == ','))
+		{
+			ESPdata->iChannelSendNum = ESPdata->buffer[i + 1] - '0';
+			break;
+		}
+	}
+	
+	return iFlag;
 }
 
-uint8_t searchArrayForRequestType(UART_Data *ESPdata)
+void ESP_Write(UART_Data *tx, uint8_t iSendType)
 {
-    // zastavice
-    uint8_t foundPOST = 0;
-    uint8_t foundDatetime = 0;
-    // dolzine
-    const uint8_t vsebinaGETLen = 4;
-    const uint8_t vsebinaPOSTLen = 5;
-    const uint8_t vsebinaDatetimeLen = 9;
-    // vsebina, ki jo iscemo
-    uint8_t vsebinaGET[vsebinaGETLen] = "GET";
-    uint8_t vsebinaPOST[vsebinaPOSTLen] = "POST";
-    uint8_t vsebinaDatetime[vsebinaDatetimeLen] = "datetime";
-
-    // pozicija
-    uint32_t pos_buffer=0;
-    uint8_t pos_vsebina = 0;
- 
-    uint8_t dan = 0;
-    uint8_t mesec = 0;
-    uint16_t leto = 0;
-    uint8_t ura = 0;
-    uint8_t minute = 0;
-     
-    
-    // search for GET
-    for(pos_buffer=0; pos_buffer<(UART_TX_RX_BUFFER_LEN-2); ++pos_buffer)       // -1 zaradi indeksov, -1 zaradi \n
-    {
-        if(ESPdata->buffer[pos_buffer] == vsebinaGET[pos_vsebina])
-        {
-            ++pos_vsebina;
-            if(pos_vsebina >= vsebinaGETLen-1)      // >=3
-            {
-                return 1;
-            }
-        }
-        else
-        {
-            pos_buffer = pos_buffer - pos_vsebina;
-            pos_vsebina=0;
-        }
-				
-		if((ESPdata->buffer[pos_buffer] == ',') && 
-			 (ESPdata->buffer[pos_buffer + 2] == ',')) 	// za iskanje vejice, poiskati je potrebno 2 vejici
-		{																														// predvidevamo da lahko imamo najvec 10 kanalov (enomestno stevilo) -> 0-9
-				ESPdata->iChannelNum = ESPdata->buffer[pos_buffer + 1] - '0';
-		}			
-    }
-    
-    // search for POST
-    pos_buffer=0;
-    pos_vsebina = 0;
-    
-    for(pos_buffer=0; pos_buffer<(UART_TX_RX_BUFFER_LEN-2); ++pos_buffer)
-    {
-        if(ESPdata->buffer[pos_buffer] == vsebinaPOST[pos_vsebina])
-        {
-            ++pos_vsebina;
-            if(pos_vsebina >= vsebinaGETLen-1)      // >=4
-            {
-                foundPOST = 1;
-                break;
-            }
-        }
-        else
-        {
-            pos_buffer = pos_buffer - pos_vsebina;
-            pos_vsebina=0;
-        }
-    }
-    
-    // if POST, poisci ali gre za nast. casa ali podatek iz senzorja
-    if(foundPOST)
-    {
-        pos_buffer = ESPdata->length - 1;     // pojdi na zadnjo mesto
-        pos_vsebina = 0;
-        
-        if(pos_buffer >= 2) // protekcija
-        {
-            // isci od zadaj naprej
-            for(pos_vsebina=0; pos_vsebina<pos_buffer-2; ++pos_vsebina)
-            {
-                if((ESPdata->buffer[pos_buffer-pos_vsebina-1] == '\n') &&     // posici lokacijo, kjer se nahajata dva '\n'
-                   (ESPdata->buffer[pos_buffer-pos_vsebina-2] == '\n'))
-                {
-                    pos_buffer = pos_buffer-pos_vsebina;
-                    break;
-                }
-            }
-            
-            foundDatetime = 1;
-            
-            for(pos_vsebina=0; pos_vsebina<vsebinaDatetimeLen-1; ++pos_vsebina)     // -1 zaradi '\n'
-            {
-                if(ESPdata->buffer[pos_buffer+pos_vsebina] != vsebinaDatetime[pos_vsebina])     // ali se na tem mestu nahaja "datetime=..." ?
-                {
-                    foundDatetime = 0;
-                }
-            }
-            
-            if(foundDatetime == 1)
-            {
-                pos_buffer += vsebinaDatetimeLen;
-                
-                dan = 10*(ESPdata->buffer[pos_buffer] - '0');
-                dan +=    ESPdata->buffer[pos_buffer+1] - '0';
-                
-                mesec = 10*(ESPdata->buffer[pos_buffer+3] - '0');
-                mesec +=    ESPdata->buffer[pos_buffer+4] - '0';
-                
-                leto = 1000*(ESPdata->buffer[pos_buffer+6] - '0');
-                leto += 100*(ESPdata->buffer[pos_buffer+7] - '0');
-                leto +=  10*(ESPdata->buffer[pos_buffer+8] - '0');
-                leto +=     (ESPdata->buffer[pos_buffer+9] - '0');
-                
-                ura = 10*(ESPdata->buffer[pos_buffer+11] - '0');
-                ura +=    ESPdata->buffer[pos_buffer+12] - '0';
-                
-                minute = 10*(ESPdata->buffer[pos_buffer+14] - '0');
-                minute +=    ESPdata->buffer[pos_buffer+15] - '0';
-                
-                return 2;
-            }
-        }
-    }
-    
-    return 0;
-}
-
-
-void ESP_Write(UART_Data *tx)
-{
+	if(iSendType == UART_SEND_TYPE_AT)
+	{
+		osSignalSet(id_UART, SIGNAL_SEND_AT);
     UART_WriteP(tx);
+	}
+	
+	else if(iSendType == UART_SEND_TYPE_UART)
+	{
+		osSignalSet(id_UART, SIGNAL_SEND_DATA);
+    UART_Write(tx);
+	}
 }
 
 
@@ -459,37 +463,19 @@ uint8_t ESP_ReadATResponse(UART_Data *rx)
 {
     UART_Read(rx);
     
-    if( (rx->buffer[0] == 'O') &&
-        (rx->buffer[1] == 'K'))
-    {
-        // response is 'OK' aka ok
+    if(strstr((const char*) &rx->buffer[0], STR_OK))
+    { // response is 'OK' aka ok
         return 1;
     }
-    else if((rx->buffer[0] == 'r') &&
-            (rx->buffer[1] == 'e'))
-    {
-        // response is 'ready' aka ok
+    else if(strstr((const char*) &rx->buffer[0], STR_READY))
+    { // response is 'ready' aka ok
         return 1;
     }
+		else if(strstr((const char*) &rx->buffer[0], STR_NO_CHANGE))
+		{	// no change ->ok
+			return 1;
+		}
     
     return 0;
-}
-
-
-// Test funkcija
-// Kar si prebral kot reposnes na AT komando (hex stevilka), pretvori v ASCII in poslji
-void T_ESP_WriteKarSiDobil(UART_Data *data)
-{
-    UART_Write(data);
-}
-
-
-// ESP error
-void ESP_error()
-{
-    GPIOB->ODR |= GPIO_ODR_ODR4;
-    while(1)
-    {
-    }
 }
  

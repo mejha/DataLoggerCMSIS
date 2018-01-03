@@ -19,10 +19,14 @@
  *				  
  */
  
-#include "stm32f10x.h"
+
 
 #ifndef _UART_H
 #define _UART_H
+
+#include "stm32f10x.h"
+//#include <cmsis_os.h>
+#include "globalData.h"
 
 #define UART_TX_RX_BUFFER_LEN   2000                // buffer dolzina za rx in tx transmissions
 #define EOT                     (uint8_t)4          // ASCII End Of Transmission
@@ -37,18 +41,20 @@ typedef struct {
 } UART_Status;
 
 typedef struct {
-    uint8_t buffer[UART_TX_RX_BUFFER_LEN];
-    const uint8_t *pBuffer;
-    uint32_t length;                            // st znakov, ki jih zelimo poslati oz. stevilo znakov, ki jih zelimo prebrati
-    UART_Status rxStatus;
-		uint8_t iChannelNum;
+	uint8_t buffer[UART_TX_RX_BUFFER_LEN];
+	const uint8_t *pBuffer;
+	uint32_t lengthAT;  	// dolzina za AT komande        // st znakov, ki jih zelimo poslati oz. stevilo znakov, ki jih zelimo prebrati
+	uint32_t lengthUART; 	// dolzina za string (HTML,...)
+	UART_Status rxStatus;
+	
+	// channel send data to (+IPD)
+	uint8_t iChannelSendNum;
 } UART_Data;
 
-//typedef struct {
-//    const uint8_t   *pBuffer;
-//    uint32_t        length;
-//} UART_TxData;
+extern UART_Data ESPdata;
 
+
+void UART_Main_idle(void);
 
 void UART_init(void);
 void UART_Write(UART_Data *tx);

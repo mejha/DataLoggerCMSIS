@@ -23,11 +23,15 @@
 *				  
 */
  
-#include "stm32f10x.h"
-#include "UART.h"
+
 
 #ifndef _ESP_H
 #define _ESP_H
+
+//#include <cmsis_os.h>
+#include "stm32f10x.h"
+//#include "UART.h"
+#include "globalData.h"
 
 #define AT_SIZE 					2
 #define ATE0_SIZE 				4
@@ -66,29 +70,47 @@ typedef struct {
     const uint8_t ATCIFSRsize;
 } ATCommandList;
 
- 
-//void ESP_reset(void);               // reset ESP module
-//void ESP_IP_MAC_set(void);          // set IP and MAC number
-//void ESP_init(void);                // initialize ESP module
-//void ESP_wp_send(void);             // send web page to ESP (after receiving GET/POST req) 
-//void ESP_read(void);                // read message from ESP over UART
+typedef enum ESP_init_states {
+	ESP_RESET = 0,
+	ESP_ECHO,
+	ESP_CWMODE,
+	ESP_CIPMUX,
+	ESP_CIPSERVER,
+	
+	ESP_FINISH_INIT
+} States;
+
+typedef enum ESP_AT_command {
+	AT = 0,
+	ATE1,
+	ATE0,
+	AT_CWMODE3,
+	AT_CIPMUX1,
+	AT_CIPSERVER,
+	AT_CIPSEND,
+	AT_CIPCLOSE,
+	AT_RESET,
+	AT_CIFSR
+	
+} AT_command_type;
+
                             
 void ESP_init(void);
-void ESP_check_request(void);
-uint8_t searchArrayForRequestType(UART_Data *ESPdata);
-void ESP_Write(UART_Data *tx);
+void ESP_Main_Idle(void);
+uint8_t searchReqType(UART_Data *ESPdata);
+void ESP_Write(UART_Data *tx, uint8_t iSendType);
 void ESP_Read(UART_Data *rx);
 void ESP_ReadReq(UART_Data *rx);
 uint8_t ESP_ReadATResponse(UART_Data *rx);  // Ali dobimo od ESP response OK, ERROR ali ready
-void ESP_error(void);               // nekaj je slo narobe pri komunikaciji z ESP
+void ESP_HTML_EOT(void);
 
-void T_ESP_WriteKarSiDobil(UART_Data *ESPdata);  // Test funkcija
+int send_ATcommand(AT_command_type command);
 
 // for building HTML 
 void ESP_HTML_build(UART_Data *ESPdata);
 void ESP_HTML_AddToBuffer(UART_Data *ESPdata, char addToPage[]);
 void ESP_HTML_setSizeOfCIPSEND(UART_Data *ESPdata);
-void ESP_HTML_BuildSenzorTable(UART_Data *ESPdata, uint8_t u8_numOfSenzors);
+void ESP_HTML_BuildSenzorTable(UART_Data *ESPdata, uint8_t numOfSenzors);
 
  
 #endif
