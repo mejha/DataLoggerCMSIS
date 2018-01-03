@@ -25,10 +25,6 @@
  */
  
  #include "stm32f10x.h"
- #include <cmsis_os.h>
- 
- // mutex
- osMutexId id_mutex_SPI;
  
  // SPI3 for testing on easymx board
  // Pins:
@@ -36,8 +32,6 @@
  // 79 - PC11 - SPI3_MISO
  // 80 - PC12 - SPI3_MOSI
  // 84 - PD3  - CS
- 
- 
  
  void SPI_init()
  {
