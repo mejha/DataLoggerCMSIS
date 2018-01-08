@@ -248,7 +248,7 @@ void ESP_HTML_EOT(void)
 // add elements to buffer
 void ESP_HTML_AddToBuffer(UART_Data *ESPdata, char addToPage[])
 {
-	int counter = 0;
+	int i = 0;
 	int sizeOfChar = 0;
 	
 //	for(counter=0; addToPage[counter]; counter++) // izracuna dolzino char
@@ -256,10 +256,10 @@ void ESP_HTML_AddToBuffer(UART_Data *ESPdata, char addToPage[])
 	
 	sizeOfChar = strlen(addToPage);
 
-	for (counter = 0; counter < sizeOfChar; counter++)
-		ESPdata->buffer[ESPdata->lengthUART + counter] = addToPage[counter];
+	for (i = 0; i < sizeOfChar; i++)
+		ESPdata->send_Buffer[ESPdata->lengthSendUART + i] = addToPage[i];
 	
-	ESPdata->lengthUART = ESPdata->lengthUART + sizeOfChar;
+	ESPdata->lengthSendUART = ESPdata->lengthSendUART + sizeOfChar;
 }
 
 // Zgradi tabelo z u8_numOfSenzors stevilom senzorjem
@@ -310,7 +310,7 @@ void ESP_HTML_build(UART_Data *ESPdata)
 {
 	uint8_t senzorNum = 4;
 	
-	ESPdata->lengthUART = 0;
+	ESPdata->lengthSendUART = 0;
 	//start HMTL
 	ESP_HTML_AddToBuffer(ESPdata, HTML_INIT);
 	ESP_HTML_AddToBuffer(ESPdata, "<hmtl>");
@@ -337,33 +337,33 @@ void ESP_HTML_build(UART_Data *ESPdata)
 
 void ESP_HTML_setSizeOfCIPSEND(UART_Data *ESPdata)
 {
-	if (ESPdata->lengthUART > 999)
+	if (ESPdata->lengthSendUART > 999)
 	{
-		ATcommand.CIPSEND[13] = (ESPdata->lengthUART / 1000) % 10 + '0';
-		ATcommand.CIPSEND[14] = (ESPdata->lengthUART / 100) % 10 + '0';
-		ATcommand.CIPSEND[15] = (ESPdata->lengthUART / 10) % 10 + '0';
-		ATcommand.CIPSEND[16] =  ESPdata->lengthUART % 10 + '0';
+		ATcommand.CIPSEND[13] = (ESPdata->lengthSendUART / 1000) % 10 + '0';
+		ATcommand.CIPSEND[14] = (ESPdata->lengthSendUART / 100) % 10 + '0';
+		ATcommand.CIPSEND[15] = (ESPdata->lengthSendUART / 10) % 10 + '0';
+		ATcommand.CIPSEND[16] =  ESPdata->lengthSendUART % 10 + '0';
 	}
-	else if ((ESPdata->lengthUART > 99) && (ESPdata->lengthUART < 1000))
+	else if ((ESPdata->lengthSendUART > 99) && (ESPdata->lengthSendUART < 1000))
 	{
 		ATcommand.CIPSEND[13] = '0';
-		ATcommand.CIPSEND[14] = (ESPdata->lengthUART / 100) % 10 + '0';
-		ATcommand.CIPSEND[15] = (ESPdata->lengthUART / 10) % 10 + '0';
-		ATcommand.CIPSEND[16] =  ESPdata->lengthUART % 10 + '0';
+		ATcommand.CIPSEND[14] = (ESPdata->lengthSendUART / 100) % 10 + '0';
+		ATcommand.CIPSEND[15] = (ESPdata->lengthSendUART / 10) % 10 + '0';
+		ATcommand.CIPSEND[16] =  ESPdata->lengthSendUART % 10 + '0';
 	}
-	else if ((ESPdata->lengthUART > 9) && (ESPdata->lengthUART < 100))
+	else if ((ESPdata->lengthSendUART > 9) && (ESPdata->lengthSendUART < 100))
 	{
 		ATcommand.CIPSEND[13] = '0';
 		ATcommand.CIPSEND[14] = '0';
-		ATcommand.CIPSEND[15] = ESPdata->lengthUART / 10 + '0';
-		ATcommand.CIPSEND[16] = ESPdata->lengthUART % 10 + '0';
+		ATcommand.CIPSEND[15] = ESPdata->lengthSendUART / 10 + '0';
+		ATcommand.CIPSEND[16] = ESPdata->lengthSendUART % 10 + '0';
 	}
 	else
 	{
 		ATcommand.CIPSEND[13] = '0';
 		ATcommand.CIPSEND[14] = '0';
 		ATcommand.CIPSEND[15] = '0';
-		ATcommand.CIPSEND[16] = ESPdata->lengthUART + '0';
+		ATcommand.CIPSEND[16] = ESPdata->lengthSendUART + '0';
 	}
 }
 
@@ -371,6 +371,8 @@ void ESP_HTML_setSizeOfCIPSEND(UART_Data *ESPdata)
 void ESP_Main_Idle()
 {
 	uint8_t requestType = 0;
+	osEvent rcvSignal;
+	int ESP_Flag = 0, iWaitResponse = 0;
 	
 	while(1)
 	{
@@ -378,33 +380,60 @@ void ESP_Main_Idle()
 		osDelay(1);
 		
 		osSignalWait(0, osWaitForever);
-		osDelay(1);
+		ESP_Flag = iSignalFlag;
 		
-		requestType = searchReqType(&ESPdata);
-		
-		switch(requestType) 
+		switch(ESP_Flag)
 		{
-			case FLAG_GET:
-			ESPdata.lengthUART = 0;
-			ESP_HTML_build(&ESPdata);	// zgradimo stran
-
-			send_ATcommand(AT_CIPSEND);
-			osDelay(20);
-			osSignalSet(id_UART, SIGNAL_SEND_DATA);	// send html page
-			osDelay(1);
+			case RECEIVED_REQUEST:
+				requestType = searchReqType(&ESPdata);
+				
+				if(requestType == FLAG_GET)
+				{
+					ESP_HTML_build(&ESPdata);	// zgradimo stran
+					
+					send_ATcommand(AT_CIPSEND);
+					osDelay(25);
+					osSignalSet(id_UART, SIGNAL_SEND_DATA);	// send html page
+					osDelay(1);
+					// wait for ok, to send CIPCLOSE
+					iWaitResponse = WAIT_OK_CIPCLOSE;
+				}
+				else if(requestType == FLAG_POST)
+				{
+					// TODO
+				}
 			
-			osSignalWait(0, 500);
-			osDelay(1);				
-			
-			send_ATcommand(AT_CIPCLOSE);
 			break;
 			
-			case FLAG_POST:     // POST
-					//dealWithPOST();
-					break;
-			default:
-					break;
+			case RESPONSE_OK:
+				if(iWaitResponse == WAIT_OK_CIPCLOSE)
+				{
+					send_ATcommand(AT_CIPCLOSE);
+					iWaitResponse = 0;
+				}
+			break;
+			
+			case RESPONSE_ERR:
+				
+			break;
 		}
+		
+//		requestType = searchReqType(&ESPdata);
+//		
+//		switch(requestType) 
+//		{
+//			case FLAG_GET:
+//			ESP_HTML_build(&ESPdata);	// zgradimo stran
+
+//			send_ATcommand(AT_CIPSEND);
+//			osDelay(20);
+//			osSignalSet(id_UART, SIGNAL_SEND_DATA);	// send html page
+//			
+//			osSignalWait(0, 500);			
+//			
+//			send_ATcommand(AT_CIPCLOSE);
+//			break;
+//		}
 	}
 }
 

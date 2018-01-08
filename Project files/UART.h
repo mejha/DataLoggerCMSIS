@@ -47,6 +47,9 @@ typedef struct {
 	uint32_t lengthUART; 	// dolzina za string (HTML,...)
 	UART_Status rxStatus;
 	
+	uint32_t lengthSendUART;
+	uint8_t send_Buffer[UART_TX_RX_BUFFER_LEN];
+	
 	// channel send data to (+IPD)
 	uint8_t iChannelSendNum;
 } UART_Data;

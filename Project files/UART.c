@@ -33,6 +33,8 @@ osMutexId id_mutex_uart;
 
 UART_Data ESPdata;
 
+int iSignalFlag;
+
 void UART_init()
 {
 //    RCC->APB2RSTR |= RCC_APB1RSTR_UART4RST;    // reset USART1 peripheral (clear all regs and set them to defaul values
@@ -51,40 +53,24 @@ void UART_init()
     UART4->CR3 = 0;                            // clear interrupt enables and other unused stuff
     
     UART4->BRR = (uint16_t)~(0xFFFF);
-    UART4->BRR |= ( (40<<4) | (11<<0) );       // BR = 162 + 12/16   --->  baudrate = 9600  (27.3.4 in RM)
-//UART4->BRR |= ( (52<<4) | (1<<0) );
-//UART4->BRR |= 0x341;
+    //UART4->BRR |= ( (40<<4) | (11<<0) );
+	
+		UART4->BRR |= ((39<<4) | (1<<0));						// BR = 39 + 1/16	(27.3.4 in RM)
     
     UART4->CR2 &= ~USART_CR2_CLKEN;             // CLK not used
     
     UART4->CR1 |= (USART_CR1_TE |               // Tx enable
                     USART_CR1_RE);              // Rx enable
-    
-    // Bit 7 TXEIE: TXE interrupt enable
-// 1: A USART interrupt is generated whenever TXE=1 in the USART_SR register
-
-//	UART4->CR1 |= (0x1<<7);
-	
-
-
-//	Bit 6 TCIE: Transmission complete interrupt enable
-	// 1: A USART interrupt is generated whenever TC=1 in the USART_SR register
-	
-//	UART4->CR1 |= (0x1<<6);
-    
-    // Bit 5 RXNEIE: RXNE interrupt enable
-// 1: A USART interrupt is generated whenever ORE=1 or RXNE=1 in the USART_SR register
-//	UART4->CR1 |= (0x1<<5);
 }
 
 void UART_Write(UART_Data *tx)
 {
     uint32_t i;
-    for(i=0; i<tx->lengthUART; ++i)
+    for(i=0; i<tx->lengthSendUART; ++i)
     {
         while(!(UART4->SR & USART_SR_TXE));        // wait uuntil Tx reg is empty
         
-        UART4->DR = tx->buffer[i] & 0xFF;
+        UART4->DR = tx->send_Buffer[i] & 0xFF;
         
         while(!(UART4->SR & USART_SR_TXE));
     }
@@ -245,11 +231,10 @@ void resetRxStatus(UART_Status *status, uint8_t a, uint8_t b, uint8_t c, uint8_t
 
 void UART_Main_idle()
 {
-	int UART_Flag = 0, UART_READ_cnt = 0;
+	int UART_Flag = 0;
 	char *pTemp;
 	char cArrayTemp[1];
-	int iTempLen = 0, i, iSignalFlag = 0;
-	uint8_t iFinishFlag = 0; // zastavica za GET in POST
+	int iTempLen = 0, i; //iSignalFlag = 0;
 	osEvent rcvSignal;
 	
 	while(1)
@@ -281,37 +266,34 @@ void UART_Main_idle()
 					i = i * 10; // enice, desetice, stotice,...
 					pTemp--;
 				}
+				
 				if(iTempLen <= ESPdata.lengthUART)
-					iFinishFlag = 1;
+					iSignalFlag = RECEIVED_REQUEST;
 			}
 		}
 		else if(UART_Flag == SIGNAL_SEND_DATA)
 		{
 			UART_Write(&ESPdata);
 			UART_Flag = UART_READ_RESPONSE;
-			UART_READ_cnt = 0;
 		}
 		else if(UART_Flag == SIGNAL_SEND_AT)
 		{
 			UART_WriteP(&ESPdata);
-			iFinishFlag = 1;
+			UART_Flag = UART_READ_RESPONSE;
 		}
 		else if(UART_Flag == UART_READ_RESPONSE)
 		{
 			UART_Read(&ESPdata);
 			
 			if(strstr((const char*) &ESPdata.buffer[0], STR_OK))
-				iFinishFlag = 1;
+				iSignalFlag = RESPONSE_OK;
 			else
 			{
 				UART_Read(&ESPdata);
 				if(strstr((const char*) &ESPdata.buffer[0], STR_OK))
-					iFinishFlag = 1;
+					iSignalFlag = RESPONSE_OK;
 				else
-				{
-					iFinishFlag = 1;
-					iSignalFlag = 1; // neki ni vredi, handlaj error -> naredi define
-				}
+					iSignalFlag = RESPONSE_ERR;
 			}
 		}
 		
@@ -319,14 +301,13 @@ void UART_Main_idle()
 		osMutexRelease(id_mutex_uart);
 		osDelay(1);
 			
-		if(iFinishFlag)
+		if(iSignalFlag)
 		{
-			iFinishFlag = 0;
+			osSignalSet(id_ESP, iSignalFlag);
+			osDelay(1);
 			UART_Flag = 0;
 			iTempLen = 0;
 			iSignalFlag = 0;
-			osSignalSet(id_ESP, 1);
-			osDelay(1);
 		}
 	}
 }
